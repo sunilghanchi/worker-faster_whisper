@@ -104,4 +104,14 @@ INPUT_VALIDATIONS = {
         'required': False,
         'default': False
     },
+    'enable_diarization': {
+        'type': bool,
+        'required': False,
+        'default': False
+    },
+    'hf_token': {
+        'type': str,
+        'required': False,
+        'default': None
+    },
 }

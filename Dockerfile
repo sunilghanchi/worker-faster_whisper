@@ -8,6 +8,7 @@ RUN rm -f /etc/apt/sources.list.d/*.list
 SHELL ["/bin/bash", "-c"]
 ENV DEBIAN_FRONTEND=noninteractive
 ENV SHELL=/bin/bash
+ENV HF_HOME=/root/.cache/huggingface
 
 # Set working directory
 WORKDIR /
@@ -37,9 +38,8 @@ RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
 
 # Install Python dependencies (Worker Template)
 COPY builder/requirements.txt /requirements.txt
-RUN --mount=type=cache,target=/root/.cache/pip \
-    pip install --upgrade pip && \
-    pip install -r /requirements.txt --no-cache-dir && \
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /requirements.txt && \
     rm /requirements.txt
 
 # Copy and run script to fetch models

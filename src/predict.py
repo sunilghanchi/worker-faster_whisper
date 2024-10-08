@@ -11,6 +11,8 @@ from runpod.serverless.utils import rp_cuda
 
 from faster_whisper import WhisperModel
 from faster_whisper.utils import format_timestamp
+from pyannote.audio import Pipeline
+import torch
 
 
 class Predictor:
@@ -18,6 +20,7 @@ class Predictor:
 
     def __init__(self):
         self.models = {}
+        self.diarization_pipeline = None
 
     def load_model(self, model_name):
         """ Load the model from the weights folder. """
@@ -35,6 +38,56 @@ class Predictor:
             for model_name, model in executor.map(self.load_model, model_names):
                 if model_name is not None:
                     self.models[model_name] = model
+
+        self.diarization_pipeline = None
+
+    def load_diarization(self, hf_token):
+        """Load the diarization pipeline with authentication"""
+        if self.diarization_pipeline is None:
+            self.diarization_pipeline = Pipeline.from_pretrained(
+                "pyannote/speaker-diarization-3.1",
+                use_auth_token=hf_token
+            )
+            if torch.cuda.is_available():
+                self.diarization_pipeline = self.diarization_pipeline.to(torch.device("cuda"))
+    
+    def get_diarization(self, audio_path, hf_token):
+        """Get speaker diarization for audio file"""
+        self.load_diarization(hf_token)
+        diarization = self.diarization_pipeline(audio_path)
+        
+        # Convert diarization to list of segments
+        diarized_segments = []
+        for turn, _, speaker in diarization.itertracks(yield_label=True):
+            diarized_segments.append({
+                "start": turn.start,
+                "end": turn.end,
+                "speaker": speaker
+            })
+        return diarized_segments
+
+    def align_words_with_speakers(self, word_timestamps, diarized_segments):
+        """Align word timestamps with speaker segments"""
+        words_with_speakers = []
+        
+        for word in word_timestamps:
+            word_mid_time = (word["start"] + word["end"]) / 2
+            speaker = None
+            
+            # Find which speaker was talking during this word
+            for segment in diarized_segments:
+                if segment["start"] <= word_mid_time <= segment["end"]:
+                    speaker = segment["speaker"]
+                    break
+            
+            words_with_speakers.append({
+                "word": word["word"],
+                "start": word["start"],
+                "end": word["end"],
+                "speaker": speaker
+            })
+            
+        return words_with_speakers
 
     def predict(
         self,
@@ -57,11 +110,12 @@ class Predictor:
         logprob_threshold=-1.0,
         no_speech_threshold=0.6,
         enable_vad=False,
-        word_timestamps=False
+        word_timestamps=False,
+        enable_diarization=False,
+        hf_token=None
     ):
-        """
-        Run a single prediction on the model
-        """
+        """Run a single prediction on the model"""
+
         model = self.models.get(model_name)
         if not model:
             raise ValueError(f"Model '{model_name}' not found.")
@@ -128,9 +182,48 @@ class Predictor:
                     })
             results["word_timestamps"] = word_timestamps
 
+        # Add diarization if enabled
+        if enable_diarization:
+            if not hf_token:
+                raise ValueError("HuggingFace token (hf_token) is required for diarization")
+            
+            # Force word timestamps on if diarization is enabled
+            word_timestamps = True
+            
+            # Get diarization results
+            diarized_segments = self.get_diarization(audio, hf_token)
+            
+            # Add speaker information to results
+            results["diarization"] = {
+                "segments": diarized_segments,
+                "words": self.align_words_with_speakers(results["word_timestamps"], diarized_segments)
+            }
+            
+            # Create transcript with speaker labels
+            speaker_transcript = []
+            current_speaker = None
+            current_text = []
+            
+            for word_info in results["diarization"]["words"]:
+                if word_info["speaker"] != current_speaker:
+                    if current_text:
+                        speaker_transcript.append({
+                            "speaker": current_speaker,
+                            "text": " ".join(current_text)
+                        })
+                        current_text = []
+                    current_speaker = word_info["speaker"]
+                current_text.append(word_info["word"])
+            
+            if current_text:
+                speaker_transcript.append({
+                    "speaker": current_speaker,
+                    "text": " ".join(current_text)
+                })
+            
+            results["speaker_transcript"] = speaker_transcript
 
         return results
-
 
 def serialize_segments(transcript):
     '''
