@@ -16,7 +16,7 @@ WORKDIR /
 # Update and upgrade the system packages (Worker Template)
 RUN apt-get update -y && \
     apt-get upgrade -y && \
-    apt-get install --yes --no-install-recommends sudo ca-certificates git wget curl bash libgl1 libx11-6 software-properties-common ffmpeg build-essential -y &&\
+    apt-get install --yes --no-install-recommends sudo ca-certificates git wget curl bash libgl1 libx11-6 software-properties-common ffmpeg build-essential python3.10 python3.10-venv python3.10-dev -y && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm -rf /var/lib/apt/lists/*
@@ -24,6 +24,7 @@ RUN apt-get update -y && \
 # Remove the existing python3 and link python3.10
 RUN rm /usr/bin/python3 && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
+    ln -s /usr/bin/python3.10 /usr/bin/python && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm -rf /var/lib/apt/lists/*
@@ -32,24 +33,3 @@ RUN rm /usr/bin/python3 && \
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py && \
     rm get-pip.py
-
-# Install Python dependencies (Worker Template)
-COPY builder/requirements.txt /requirements.txt
-RUN pip install --upgrade pip && \
-    pip install --no-cache-dir -r /requirements.txt && \
-    rm /requirements.txt
-
-# Copy and run script to fetch models
-COPY builder/fetch_models.py /fetch_models.py
-
-# Add debugging information
-RUN echo "Running fetch_models.py" && \
-    python /fetch_models.py && \
-    echo "fetch_models.py completed" && \
-    rm /fetch_models.py
-
-# Copy source code into image
-COPY src .
-
-# Set default command
-CMD ["python", "-u", "/rp_handler.py"]
