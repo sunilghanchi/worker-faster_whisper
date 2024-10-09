@@ -33,3 +33,24 @@ RUN rm /usr/bin/python3 && \
 RUN curl https://bootstrap.pypa.io/get-pip.py -o get-pip.py && \
     python get-pip.py && \
     rm get-pip.py
+
+# Install Python dependencies (Worker Template)
+COPY builder/requirements.txt /requirements.txt
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -r /requirements.txt && \
+    rm /requirements.txt
+
+# Copy and run script to fetch models
+COPY builder/fetch_models.py /fetch_models.py
+
+# Add debugging information
+RUN echo "Running fetch_models.py" && \
+    python /fetch_models.py && \
+    echo "fetch_models.py completed" && \
+    rm /fetch_models.py
+
+# Copy source code into image
+COPY src .
+
+# Set default command
+CMD ["python", "-u", "/rp_handler.py"]
