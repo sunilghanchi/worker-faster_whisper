@@ -13,10 +13,13 @@ ENV HF_HOME=/root/.cache/huggingface
 # Set working directory
 WORKDIR /
 
-# Update and upgrade the system packages (Worker Template)
+# Add deadsnakes PPA and install Python 3.10
 RUN apt-get update -y && \
     apt-get upgrade -y && \
-    apt-get install --yes --no-install-recommends sudo ca-certificates git wget curl bash libgl1 libx11-6 software-properties-common ffmpeg build-essential python3.10 python3.10-venv python3.10-dev -y && \
+    apt-get install --yes --no-install-recommends sudo ca-certificates git wget curl bash software-properties-common && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update -y && \
+    apt-get install --yes --no-install-recommends python3.10 python3.10-venv python3.10-dev libgl1 libx11-6 ffmpeg build-essential && \
     apt-get autoremove -y && \
     apt-get clean -y && \
     rm -rf /var/lib/apt/lists/*
