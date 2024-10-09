@@ -21,11 +21,8 @@ RUN apt-get update -y && \
     apt-get clean -y && \
     rm -rf /var/lib/apt/lists/*
 
-# Add the deadsnakes PPA and install Python 3.10
-RUN add-apt-repository ppa:deadsnakes/ppa -y && \
-    apt-get install python3.10-dev python3.10-venv python3-pip -y --no-install-recommends && \
-    ln -s /usr/bin/python3.10 /usr/bin/python && \
-    rm /usr/bin/python3 && \
+# Remove the existing python3 and link python3.10
+RUN rm /usr/bin/python3 && \
     ln -s /usr/bin/python3.10 /usr/bin/python3 && \
     apt-get autoremove -y && \
     apt-get clean -y && \
@@ -44,11 +41,15 @@ RUN pip install --upgrade pip && \
 
 # Copy and run script to fetch models
 COPY builder/fetch_models.py /fetch_models.py
-RUN python /fetch_models.py && \
+
+# Add debugging information
+RUN echo "Running fetch_models.py" && \
+    python /fetch_models.py && \
+    echo "fetch_models.py completed" && \
     rm /fetch_models.py
 
 # Copy source code into image
 COPY src .
 
 # Set default command
-CMD python -u /rp_handler.py
+CMD ["python", "-u", "/rp_handler.py"]
