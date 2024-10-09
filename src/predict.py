@@ -56,7 +56,6 @@ class Predictor:
         self.load_diarization(hf_token)
         diarization = self.diarization_pipeline(audio_path)
         
-        # Convert diarization to list of segments
         diarized_segments = []
         for turn, _, speaker in diarization.itertracks(yield_label=True):
             diarized_segments.append({
@@ -74,7 +73,6 @@ class Predictor:
             word_mid_time = (word["start"] + word["end"]) / 2
             speaker = None
             
-            # Find which speaker was talking during this word
             for segment in diarized_segments:
                 if segment["start"] <= word_mid_time <= segment["end"]:
                     speaker = segment["speaker"]
@@ -127,31 +125,88 @@ class Predictor:
         else:
             temperature = [temperature]
 
-        segments, info = list(model.transcribe(str(audio),
-                                               language=language,
-                                               task="transcribe",
-                                               beam_size=beam_size,
-                                               best_of=best_of,
-                                               patience=patience,
-                                               length_penalty=length_penalty,
-                                               temperature=temperature,
-                                               compression_ratio_threshold=compression_ratio_threshold,
-                                               log_prob_threshold=logprob_threshold,
-                                               no_speech_threshold=no_speech_threshold,
-                                               condition_on_previous_text=condition_on_previous_text,
-                                               initial_prompt=initial_prompt,
-                                               prefix=None,
-                                               suppress_blank=True,
-                                               suppress_tokens=[-1],
-                                               without_timestamps=False,
-                                               max_initial_timestamp=1.0,
-                                               word_timestamps=word_timestamps,
-                                               vad_filter=enable_vad
-                                               ))
+        segments, info = model.transcribe(str(audio),
+                                          language=language,
+                                          task="transcribe",
+                                          beam_size=beam_size,
+                                          best_of=best_of,
+                                          patience=patience,
+                                          length_penalty=length_penalty,
+                                          temperature=temperature,
+                                          compression_ratio_threshold=compression_ratio_threshold,
+                                          log_prob_threshold=logprob_threshold,
+                                          no_speech_threshold=no_speech_threshold,
+                                          condition_on_previous_text=condition_on_previous_text,
+                                          initial_prompt=initial_prompt,
+                                          prefix=None,
+                                          suppress_blank=True,
+                                          suppress_tokens=[-1],
+                                          without_timestamps=False,
+                                          max_initial_timestamp=1.0,
+                                          word_timestamps=True,  # Always get word timestamps
+                                          vad_filter=enable_vad
+                                          )
 
         segments = list(segments)
 
-        transcription = format_segments(transcription, segments)
+        if enable_diarization:
+            if not hf_token:
+                raise ValueError("HuggingFace token (hf_token) is required for diarization")
+            
+            diarized_segments = self.get_diarization(audio, hf_token)
+            
+            # Integrate diarization information into segments
+            for segment in segments:
+                segment.words = self.align_words_with_speakers(segment.words, diarized_segments)
+        
+        # Process segments
+        processed_segments = []
+        speaker_transcript = []
+        full_transcript = []
+
+        for segment in segments:
+            processed_segment = {
+                "id": segment.id,
+                "start": segment.start,
+                "end": segment.end,
+                "text": segment.text,
+                "avg_logprob": segment.avg_logprob,
+                "compression_ratio": segment.compression_ratio,
+                "no_speech_prob": segment.no_speech_prob,
+                "words": segment.words
+            }
+            processed_segments.append(processed_segment)
+            full_transcript.append(segment.text)
+
+            if enable_diarization:
+                current_speaker = None
+                current_text = []
+                for word in segment.words:
+                    if word["speaker"] != current_speaker:
+                        if current_text:
+                            speaker_transcript.append({
+                                "speaker": current_speaker,
+                                "text": " ".join(current_text)
+                            })
+                            current_text = []
+                        current_speaker = word["speaker"]
+                    current_text.append(word["word"])
+                if current_text:
+                    speaker_transcript.append({
+                        "speaker": current_speaker,
+                        "text": " ".join(current_text)
+                    })
+
+        results = {
+            "detected_language": info.language,
+            "transcription": " ".join(full_transcript),
+            "segments": processed_segments,
+            "device": "cuda" if rp_cuda.is_available() else "cpu",
+            "model": model_name,
+        }
+
+        if enable_diarization:
+            results["speaker_transcript"] = speaker_transcript
 
         if translate:
             translation_segments, translation_info = model.transcribe(
@@ -159,69 +214,7 @@ class Predictor:
                 task="translate",
                 temperature=temperature
             )
-
-            translation = format_segments(translation, translation_segments)
-
-        results = {
-            "segments": serialize_segments(segments),
-            "detected_language": info.language,
-            "transcription": transcription,
-            "translation": translation if translate else None,
-            "device": "cuda" if rp_cuda.is_available() else "cpu",
-            "model": model_name,
-        }
-
-        if word_timestamps:
-            word_timestamps = []
-            for segment in segments:
-                for word in segment.words:
-                    word_timestamps.append({
-                        "word": word.word,
-                        "start": word.start,
-                        "end": word.end,
-                    })
-            results["word_timestamps"] = word_timestamps
-
-        # Add diarization if enabled
-        if enable_diarization:
-            if not hf_token:
-                raise ValueError("HuggingFace token (hf_token) is required for diarization")
-            
-            # Force word timestamps on if diarization is enabled
-            word_timestamps = True
-            
-            # Get diarization results
-            diarized_segments = self.get_diarization(audio, hf_token)
-            
-            # Add speaker information to results
-            results["diarization"] = {
-                "segments": diarized_segments,
-                "words": self.align_words_with_speakers(results["word_timestamps"], diarized_segments)
-            }
-            
-            # Create transcript with speaker labels
-            speaker_transcript = []
-            current_speaker = None
-            current_text = []
-            
-            for word_info in results["diarization"]["words"]:
-                if word_info["speaker"] != current_speaker:
-                    if current_text:
-                        speaker_transcript.append({
-                            "speaker": current_speaker,
-                            "text": " ".join(current_text)
-                        })
-                        current_text = []
-                    current_speaker = word_info["speaker"]
-                current_text.append(word_info["word"])
-            
-            if current_text:
-                speaker_transcript.append({
-                    "speaker": current_speaker,
-                    "text": " ".join(current_text)
-                })
-            
-            results["speaker_transcript"] = speaker_transcript
+            results["translation"] = format_segments(translation, translation_segments)
 
         return results
 
